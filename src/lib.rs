@@ -20,8 +20,17 @@ pub enum IndexError {
     CouldNotIndexInto(&'static str),
     #[error("Index Out Of Bounds: {0}")]
     IndexOutOfBounds(usize),
-    #[error("InvalidArrayIndex: {0}")]
+    #[error("Invalid Array Index: {0}")]
     InvalidArrayIndex(#[from] std::num::ParseIntError),
+    #[error("Array Index Leading Zero")]
+    ArrayIndexLeadingZero,
+}
+
+fn parse_idx(idx: &str) -> Result<usize, IndexError> {
+    if idx.len() > 1 && idx.starts_with("0") {
+        return Err(IndexError::ArrayIndexLeadingZero);
+    }
+    Ok(idx.parse()?)
 }
 
 #[derive(Clone, Debug)]
@@ -32,8 +41,14 @@ pub struct JsonPointer<S: AsRef<str>> {
 impl<S: AsRef<str>> JsonPointer<S> {
     pub fn parse(s: S) -> Result<Self, ParseError> {
         let src = s.as_ref();
+        if src == "" {
+            return Ok(JsonPointer {
+                src: s,
+                segments: VecDeque::new(),
+            });
+        }
         let mut segments = VecDeque::new();
-        let mut segment = PtrSegment::Unescaped(0..0);
+        let mut segment = PtrSegment::Unescaped(1..1);
         let mut escape_next_char = false;
         for (idx, c) in src.char_indices() {
             if idx == 0 {
@@ -89,6 +104,7 @@ impl<S: AsRef<str>> JsonPointer<S> {
                 }
             }
         }
+        segments.push_back(segment);
         Ok(JsonPointer { src: s, segments })
     }
     pub fn get_segment<'a>(&'a self, idx: usize) -> Option<&'a str> {
@@ -104,7 +120,7 @@ impl<S: AsRef<str>> JsonPointer<S> {
     pub fn get<'a>(&self, mut doc: &'a Value) -> Option<&'a Value> {
         for seg in self.iter() {
             doc = if doc.is_array() {
-                doc.get(seg.parse::<usize>().ok()?)?
+                doc.get(parse_idx(seg).ok()?)?
             } else {
                 doc.get(seg)?
             };
@@ -114,7 +130,7 @@ impl<S: AsRef<str>> JsonPointer<S> {
     pub fn get_mut<'a>(&self, mut doc: &'a mut Value) -> Option<&'a mut Value> {
         for seg in self.iter() {
             doc = if doc.is_array() {
-                doc.get_mut(seg.parse::<usize>().ok()?)?
+                doc.get_mut(parse_idx(seg).ok()?)?
             } else {
                 doc.get_mut(seg)?
             };
@@ -124,24 +140,31 @@ impl<S: AsRef<str>> JsonPointer<S> {
     pub fn take(&self, mut doc: &mut Value) -> Option<Value> {
         for seg in self.iter() {
             doc = if doc.is_array() {
-                doc.get_mut(seg.parse::<usize>().ok()?)?
+                doc.get_mut(parse_idx(seg).ok()?)?
             } else {
                 doc.get_mut(seg)?
             };
         }
         Some(doc.take())
     }
-    pub fn set(&self, mut doc: &mut Value, value: Value) -> Result<Option<Value>, IndexError> {
+    pub fn set(
+        &self,
+        mut doc: &mut Value,
+        value: Value,
+        recursive: bool,
+    ) -> Result<Option<Value>, IndexError> {
         for (idx, seg) in self.iter().enumerate() {
             doc = match doc {
                 Value::Array(ref mut l) => {
-                    let num = if seg == "-" { l.len() } else { seg.parse()? };
+                    let num = if seg == "-" { l.len() } else { parse_idx(seg)? };
                     if num == l.len() {
                         if let Some(next) = self.get_segment(idx + 1) {
-                            if next == "0" {
-                                l.push(Value::Array(Vec::with_capacity(1)));
-                            } else {
-                                l.push(Value::Object(serde_json::Map::new()))
+                            if recursive {
+                                if next == "0" {
+                                    l.push(Value::Array(Vec::with_capacity(1)));
+                                } else {
+                                    l.push(Value::Object(serde_json::Map::new()))
+                                }
                             }
                         } else {
                             l.push(value);
@@ -156,10 +179,15 @@ impl<S: AsRef<str>> JsonPointer<S> {
                 Value::Object(ref mut o) => {
                     if o.get(seg).is_none() {
                         if let Some(next) = self.get_segment(idx + 1) {
-                            if next == "0" {
-                                o.insert(seg.to_string(), Value::Array(Vec::with_capacity(1)));
-                            } else {
-                                o.insert(seg.to_string(), Value::Object(serde_json::Map::new()));
+                            if recursive {
+                                if next == "0" {
+                                    o.insert(seg.to_string(), Value::Array(Vec::with_capacity(1)));
+                                } else {
+                                    o.insert(
+                                        seg.to_string(),
+                                        Value::Object(serde_json::Map::new()),
+                                    );
+                                }
                             }
                         } else {
                             o.insert(seg.to_string(), value);
@@ -173,18 +201,25 @@ impl<S: AsRef<str>> JsonPointer<S> {
         }
         Ok(Some(std::mem::replace(doc, value)))
     }
-    pub fn insert(&self, mut doc: &mut Value, value: Value) -> Result<Option<Value>, IndexError> {
+    pub fn insert(
+        &self,
+        mut doc: &mut Value,
+        value: Value,
+        recursive: bool,
+    ) -> Result<Option<Value>, IndexError> {
         for (idx, seg) in self.iter().enumerate() {
             doc = match doc {
                 Value::Array(ref mut l) => {
-                    let num = if seg == "-" { l.len() } else { seg.parse()? };
+                    let num = if seg == "-" { l.len() } else { parse_idx(seg)? };
                     if let Some(next) = self.get_segment(idx + 1) {
-                        if next == "0" {
-                            l.insert(num, Value::Array(Vec::with_capacity(1)));
-                        } else {
-                            l.insert(num, Value::Object(serde_json::Map::new()))
+                        if num == l.len() && recursive {
+                            if next == "0" {
+                                l.insert(num, Value::Array(Vec::with_capacity(1)));
+                            } else {
+                                l.insert(num, Value::Object(serde_json::Map::new()))
+                            }
                         }
-                    } else {
+                    } else if num <= l.len() {
                         l.insert(num, value);
                         return Ok(None);
                     }
@@ -196,29 +231,39 @@ impl<S: AsRef<str>> JsonPointer<S> {
                 Value::Object(ref mut o) => {
                     if o.get(seg).is_none() {
                         if let Some(next) = self.get_segment(idx + 1) {
-                            if next == "0" {
-                                o.insert(seg.to_string(), Value::Array(Vec::with_capacity(1)));
-                            } else {
-                                o.insert(seg.to_string(), Value::Object(serde_json::Map::new()));
+                            if recursive {
+                                if next == "0" {
+                                    o.insert(seg.to_string(), Value::Array(Vec::with_capacity(1)));
+                                } else {
+                                    o.insert(
+                                        seg.to_string(),
+                                        Value::Object(serde_json::Map::new()),
+                                    );
+                                }
                             }
                         } else {
                             o.insert(seg.to_string(), value);
                             return Ok(None);
                         }
                     }
-                    o.get_mut(seg).unwrap()
+                    o.get_mut(seg)
+                        .ok_or(IndexError::CouldNotIndexInto("undefined"))?
                 }
                 Value::String(_) => return Err(IndexError::CouldNotIndexInto("string")),
             }
         }
         Ok(Some(std::mem::replace(doc, value)))
     }
-    pub fn remove(&self, mut doc: &mut Value) -> Option<Value> {
+    pub fn remove(&self, mut doc: &mut Value, allow_last: bool) -> Option<Value> {
         for (idx, seg) in self.iter().enumerate() {
             if self.get_segment(idx + 1).is_none() {
                 match doc {
                     Value::Array(ref mut l) => {
-                        let num = seg.parse().ok()?;
+                        let num = if allow_last && seg == "-" && !l.is_empty() {
+                            l.len() - 1
+                        } else {
+                            parse_idx(seg).ok()?
+                        };
                         if num < l.len() {
                             return Some(l.remove(num));
                         } else {
@@ -233,11 +278,11 @@ impl<S: AsRef<str>> JsonPointer<S> {
             } else {
                 doc = match doc {
                     Value::Array(ref mut arr) => {
-                        if seg == "-" && !arr.is_empty() {
+                        if allow_last && seg == "-" && !arr.is_empty() {
                             let arr_len = arr.len();
                             arr.get_mut(arr_len - 1)?
                         } else {
-                            arr.get_mut(seg.parse::<usize>().ok()?)?
+                            arr.get_mut(parse_idx(seg).ok()?)?
                         }
                     }
                     Value::Object(ref mut o) => o.get_mut(seg)?,
@@ -409,8 +454,8 @@ impl<S: AsRef<str>> AsRef<str> for JsonPointer<S> {
         self.src.as_ref()
     }
 }
-impl<S: AsRef<str>> PartialEq for JsonPointer<S> {
-    fn eq(&self, rhs: &Self) -> bool {
+impl<S0: AsRef<str>, S1: AsRef<str>> PartialEq<JsonPointer<S1>> for JsonPointer<S0> {
+    fn eq(&self, rhs: &JsonPointer<S1>) -> bool {
         self.segments.len() == rhs.segments.len() && {
             let mut rhs_iter = rhs.iter();
             self.iter().all(|lhs| Some(lhs) == rhs_iter.next())
@@ -531,10 +576,15 @@ impl<'a, S: AsRef<str>> Iterator for JsonPointerIter<'a, S> {
     fn next(&mut self) -> Option<Self::Item> {
         if self.start < self.end {
             let ret = self.ptr.get_segment(self.start);
+            self.start += 1;
             ret
         } else {
             None
         }
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let size = self.end - self.start;
+        (size, Some(size))
     }
 }
 impl<'a, S: AsRef<str>> DoubleEndedIterator for JsonPointerIter<'a, S> {
@@ -578,6 +628,9 @@ impl<S: AsRef<str>> Iterator for JsonPointerIntoIter<S> {
     type Item = String;
     fn next(&mut self) -> Option<Self::Item> {
         self.next().map(|s| s.to_string())
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
     }
 }
 impl<S: AsRef<str>> DoubleEndedIterator for JsonPointerIntoIter<S> {
