@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
-use std::ops::{Add, AddAssign, Range};
+use std::ops::{Add, AddAssign, Bound, Range, RangeBounds};
 use std::str::FromStr;
 
 use serde_json::Value;
@@ -33,10 +33,122 @@ fn parse_idx(idx: &str) -> Result<usize, IndexError> {
     Ok(idx.parse()?)
 }
 
-#[derive(Clone, Debug)]
-pub struct JsonPointer<S: AsRef<str>> {
+pub trait SegList {
+    fn get(&self, idx: usize) -> Option<&PtrSegment>;
+    fn first(&self) -> Option<&PtrSegment>;
+    fn last(&self) -> Option<&PtrSegment>;
+    fn len(&self) -> usize;
+    fn slice<R: RangeBounds<usize>>(&self, range: R) -> Option<(&[PtrSegment], &[PtrSegment])>;
+    fn to_vec_deque(self) -> VecDeque<PtrSegment>;
+}
+
+impl SegList for VecDeque<PtrSegment> {
+    fn get(&self, idx: usize) -> Option<&PtrSegment> {
+        self.get(idx)
+    }
+    fn first(&self) -> Option<&PtrSegment> {
+        self.front()
+    }
+    fn last(&self) -> Option<&PtrSegment> {
+        self.back()
+    }
+    fn len(&self) -> usize {
+        self.len()
+    }
+    fn slice<'a, R: RangeBounds<usize>>(&self, range: R) -> Option<(&[PtrSegment], &[PtrSegment])> {
+        let start_idx = match range.start_bound() {
+            Bound::Unbounded => 0,
+            Bound::Included(n) => *n,
+            Bound::Excluded(n) => n + 1,
+        };
+        let end_idx = match range.end_bound() {
+            Bound::Unbounded => self.len(),
+            Bound::Included(n) => n + 1,
+            Bound::Excluded(n) => *n,
+        };
+        let (left, right) = self.as_slices();
+        if start_idx < left.len() {
+            if end_idx <= left.len() {
+                Some((&left[start_idx..end_idx], &[]))
+            } else if end_idx - left.len() <= right.len() {
+                Some((&left[start_idx..], &right[..end_idx - left.len()]))
+            } else {
+                None
+            }
+        } else if start_idx - left.len() < right.len() && end_idx - left.len() <= right.len() {
+            Some((&[], &right[start_idx - left.len()..end_idx - left.len()]))
+        } else {
+            None
+        }
+    }
+    fn to_vec_deque(self) -> VecDeque<PtrSegment> {
+        self
+    }
+}
+
+impl SegList for (&[PtrSegment], &[PtrSegment]) {
+    fn get(&self, idx: usize) -> Option<&PtrSegment> {
+        if idx < self.0.len() {
+            self.0.get(idx)
+        } else {
+            self.1.get(idx - self.0.len())
+        }
+    }
+    fn first(&self) -> Option<&PtrSegment> {
+        if self.0.is_empty() {
+            self.1.first()
+        } else {
+            self.0.first()
+        }
+    }
+    fn last(&self) -> Option<&PtrSegment> {
+        if self.1.is_empty() {
+            self.0.last()
+        } else {
+            self.1.last()
+        }
+    }
+    fn len(&self) -> usize {
+        self.0.len() + self.1.len()
+    }
+    fn slice<R: RangeBounds<usize>>(&self, range: R) -> Option<(&[PtrSegment], &[PtrSegment])> {
+        let start_idx = match range.start_bound() {
+            Bound::Unbounded => 0,
+            Bound::Included(n) => *n,
+            Bound::Excluded(n) => n + 1,
+        };
+        let end_idx = match range.end_bound() {
+            Bound::Unbounded => self.len(),
+            Bound::Included(n) => n + 1,
+            Bound::Excluded(n) => *n,
+        };
+        let (left, right) = *self;
+        if start_idx < left.len() {
+            if end_idx <= left.len() {
+                Some((&left[start_idx..end_idx], &[]))
+            } else if end_idx - left.len() <= right.len() {
+                Some((&left[start_idx..], &right[..end_idx - left.len()]))
+            } else {
+                None
+            }
+        } else if start_idx - left.len() < right.len() && end_idx - left.len() <= right.len() {
+            Some((&[], &right[start_idx - left.len()..end_idx - left.len()]))
+        } else {
+            None
+        }
+    }
+    fn to_vec_deque(self) -> VecDeque<PtrSegment> {
+        let mut res = VecDeque::with_capacity(self.0.len() + self.1.len());
+        res.extend(self.0.into_iter().cloned());
+        res.extend(self.1.into_iter().cloned());
+        res
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct JsonPointer<S: AsRef<str> = String, V: SegList = VecDeque<PtrSegment>> {
     src: S,
-    segments: VecDeque<PtrSegment>,
+    segments: V,
 }
 impl<S: AsRef<str>> JsonPointer<S> {
     pub fn parse(s: S) -> Result<Self, ParseError> {
@@ -107,6 +219,8 @@ impl<S: AsRef<str>> JsonPointer<S> {
         segments.push_back(segment);
         Ok(JsonPointer { src: s, segments })
     }
+}
+impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
     pub fn get_segment<'a>(&'a self, idx: usize) -> Option<&'a str> {
         match self.segments.get(idx) {
             Some(PtrSegment::Unescaped(range)) => Some(&self.src.as_ref()[range.clone()]),
@@ -293,17 +407,19 @@ impl<S: AsRef<str>> JsonPointer<S> {
         None
     }
     pub fn is_empty(&self) -> bool {
-        self.segments.is_empty()
+        self.segments.len() == 0
     }
-    pub fn to_owned(self) -> JsonPointer<String> {
+    pub fn to_owned(self) -> JsonPointer {
         JsonPointer {
-            src: self.as_ref().to_owned(),
-            segments: self.segments,
+            src: self.src.as_ref()[self.segments.first().map(|s| s.range().start).unwrap_or(0)
+                ..self.segments.last().map(|s| s.range().end).unwrap_or(0)]
+                .to_owned(),
+            segments: self.segments.to_vec_deque(),
         }
     }
-    pub fn common_prefix<'a, S0: AsRef<str>>(
+    pub fn common_prefix<'a, S0: AsRef<str>, V0: SegList>(
         &'a self,
-        other: &JsonPointer<S0>,
+        other: &JsonPointer<S0, V0>,
     ) -> JsonPointer<&'a str> {
         let src = self.src.as_ref();
         let mut common = None;
@@ -324,7 +440,7 @@ impl<S: AsRef<str>> JsonPointer<S> {
         };
         JsonPointer::parse(&src[..common_idx]).unwrap()
     }
-    pub fn starts_with<S0: AsRef<str>>(&self, other: &JsonPointer<S0>) -> bool {
+    pub fn starts_with<S0: AsRef<str>, V0: SegList>(&self, other: &JsonPointer<S0, V0>) -> bool {
         for (idx, seg) in other.iter().enumerate() {
             if self.get_segment(idx) != Some(seg) {
                 return false;
@@ -332,14 +448,44 @@ impl<S: AsRef<str>> JsonPointer<S> {
         }
         true
     }
-    pub fn iter<'a>(&'a self) -> JsonPointerIter<'a, S> {
+    pub fn strip_prefix<'a, S0: AsRef<str>, V0: SegList>(
+        &'a self,
+        other: &JsonPointer<S0, V0>,
+    ) -> Option<JsonPointer<&'a str, (&'a [PtrSegment], &'a [PtrSegment])>> {
+        for (idx, seg) in other.iter().enumerate() {
+            if self.get_segment(idx) != Some(seg) {
+                return None;
+            }
+        }
+        if self.len() == other.len() {
+            return Some(Default::default());
+        }
+        let src_start = self.segments.get(other.segments.len())?.range().start;
+        Some(JsonPointer {
+            src: &self.src.as_ref()[src_start..],
+            segments: self.segments.slice(other.segments.len()..)?,
+        })
+    }
+    pub fn slice<R: RangeBounds<usize>>(
+        &self,
+        range: R,
+    ) -> Option<JsonPointer<&str, (&[PtrSegment], &[PtrSegment])>> {
+        let s = self.src.as_ref();
+        Some(JsonPointer {
+            src: s,
+            segments: self.segments.slice(range)?,
+        })
+    }
+    pub fn iter<'a>(&'a self) -> JsonPointerIter<'a, S, V> {
         JsonPointerIter {
             ptr: self,
             start: 0,
             end: self.segments.len(),
         }
     }
-    pub fn into_iter(self) -> JsonPointerIntoIter<S> {
+}
+impl<S: AsRef<str>, V: IntoIterator<Item = PtrSegment> + SegList> JsonPointer<S, V> {
+    pub fn into_iter(self) -> JsonPointerIntoIter<S, V> {
         JsonPointerIntoIter {
             src: self.src,
             iter: self.segments.into_iter(),
@@ -426,7 +572,7 @@ impl JsonPointer<String> {
             self.src.truncate(last.range().start - 1)
         }
     }
-    pub fn pop_front(&mut self) {
+    pub fn pop_start(&mut self) {
         if let Some(last) = self.segments.pop_front() {
             let range = last.into_range();
             self.src.replace_range(range.start - 1..range.end, "");
@@ -438,9 +584,23 @@ impl JsonPointer<String> {
             self.segments.truncate(new_len);
         }
     }
-    pub fn join(mut self, segment: &str) -> Self {
+    pub fn join_end(mut self, segment: &str) -> Self {
         self.push_end(segment);
         self
+    }
+    pub fn join_start(mut self, segment: &str) -> Self {
+        self.push_start(segment);
+        self
+    }
+    pub fn append<S: AsRef<str>, V: SegList>(&mut self, suffix: &JsonPointer<S, V>) {
+        for seg in suffix.iter() {
+            self.push_end(seg)
+        }
+    }
+    pub fn prepend<S: AsRef<str>, V: SegList>(&mut self, prefix: &JsonPointer<S, V>) {
+        for seg in prefix.iter().rev() {
+            self.push_start(seg);
+        }
     }
 }
 impl FromStr for JsonPointer<String> {
@@ -454,37 +614,46 @@ impl<S: AsRef<str>> AsRef<str> for JsonPointer<S> {
         self.src.as_ref()
     }
 }
-impl<S0: AsRef<str>, S1: AsRef<str>> PartialEq<JsonPointer<S1>> for JsonPointer<S0> {
-    fn eq(&self, rhs: &JsonPointer<S1>) -> bool {
+impl<S0, S1, V0, V1> PartialEq<JsonPointer<S1, V1>> for JsonPointer<S0, V0>
+where
+    S0: AsRef<str>,
+    S1: AsRef<str>,
+    V0: SegList,
+    V1: SegList,
+{
+    fn eq(&self, rhs: &JsonPointer<S1, V1>) -> bool {
         self.segments.len() == rhs.segments.len() && {
             let mut rhs_iter = rhs.iter();
             self.iter().all(|lhs| Some(lhs) == rhs_iter.next())
         }
     }
 }
-impl<S: AsRef<str>> Hash for JsonPointer<S> {
+impl<S: AsRef<str>, V: SegList> Hash for JsonPointer<S, V> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         for seg in self.iter() {
             seg.hash(state);
         }
     }
 }
-impl<S: AsRef<str>> std::fmt::Display for JsonPointer<S> {
+impl<S: AsRef<str>, V: SegList> std::fmt::Display for JsonPointer<S, V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(self.as_ref(), f)
+        std::fmt::Display::fmt(self.src.as_ref(), f)
     }
 }
-impl<'a, S0, S1> Add<&'a JsonPointer<S1>> for JsonPointer<S0>
+impl<'a, S0, S1, V0, V1> Add<&'a JsonPointer<S1, V1>> for JsonPointer<S0, V0>
 where
     S0: AsRef<str> + Add<&'a str>,
     S0::Output: AsRef<str>,
     S1: AsRef<str>,
+    V0: SegList + Extend<PtrSegment>,
+    V1: SegList,
+    for<'v> &'v V1: IntoIterator<Item = &'v PtrSegment>,
 {
-    type Output = JsonPointer<S0::Output>;
-    fn add(mut self, rhs: &'a JsonPointer<S1>) -> Self::Output {
+    type Output = JsonPointer<S0::Output, V0>;
+    fn add(mut self, rhs: &'a JsonPointer<S1, V1>) -> Self::Output {
         let src_len = self.src.as_ref().len();
         self.segments
-            .extend(rhs.segments.iter().map(|seg| match seg {
+            .extend((&rhs.segments).into_iter().map(|seg| match seg {
                 PtrSegment::Unescaped(range) => {
                     PtrSegment::Unescaped(range.start + src_len..range.end + src_len)
                 }
@@ -498,15 +667,45 @@ where
         }
     }
 }
-impl<'a, S0, S1> AddAssign<&'a JsonPointer<S1>> for JsonPointer<S0>
+impl<'a, S0, S1, V0, V1> Add<&'a JsonPointer<S1, V1>> for &JsonPointer<S0, V0>
+where
+    S0: AsRef<str> + Add<&'a str> + Clone,
+    S0::Output: AsRef<str>,
+    S1: AsRef<str>,
+    V0: SegList + Clone + Extend<PtrSegment>,
+    V1: SegList,
+    for<'v> &'v V1: IntoIterator<Item = &'v PtrSegment>,
+{
+    type Output = JsonPointer<S0::Output, V0>;
+    fn add(self, rhs: &'a JsonPointer<S1, V1>) -> Self::Output {
+        let src_len = self.src.as_ref().len();
+        let mut segments = self.segments.clone();
+        segments.extend((&rhs.segments).into_iter().map(|seg| match seg {
+            PtrSegment::Unescaped(range) => {
+                PtrSegment::Unescaped(range.start + src_len..range.end + src_len)
+            }
+            PtrSegment::Escaped(range, s) => {
+                PtrSegment::Escaped(range.start + src_len..range.end + src_len, s.clone())
+            }
+        }));
+        JsonPointer {
+            src: self.src.clone() + rhs.src.as_ref(),
+            segments,
+        }
+    }
+}
+impl<'a, S0, S1, V0, V1> AddAssign<&'a JsonPointer<S1, V1>> for JsonPointer<S0, V0>
 where
     S0: AsRef<str> + AddAssign<&'a str>,
     S1: AsRef<str>,
+    V0: SegList + Extend<PtrSegment>,
+    V1: SegList,
+    for<'v> &'v V1: IntoIterator<Item = &'v PtrSegment>,
 {
-    fn add_assign(&mut self, rhs: &'a JsonPointer<S1>) {
+    fn add_assign(&mut self, rhs: &'a JsonPointer<S1, V1>) {
         let src_len = self.src.as_ref().len();
         self.segments
-            .extend(rhs.segments.iter().map(|seg| match seg {
+            .extend((&rhs.segments).into_iter().map(|seg| match seg {
                 PtrSegment::Unescaped(range) => {
                     PtrSegment::Unescaped(range.start + src_len..range.end + src_len)
                 }
@@ -541,7 +740,7 @@ where
 }
 
 #[derive(Clone, Debug)]
-enum PtrSegment {
+pub enum PtrSegment {
     Unescaped(Range<usize>),
     Escaped(Range<usize>, String),
 }
@@ -566,12 +765,12 @@ impl PtrSegment {
     }
 }
 
-pub struct JsonPointerIter<'a, S: AsRef<str> + 'a> {
-    ptr: &'a JsonPointer<S>,
+pub struct JsonPointerIter<'a, S: AsRef<str> + 'a, V: SegList> {
+    ptr: &'a JsonPointer<S, V>,
     start: usize,
     end: usize,
 }
-impl<'a, S: AsRef<str>> Iterator for JsonPointerIter<'a, S> {
+impl<'a, S: AsRef<str>, V: SegList> Iterator for JsonPointerIter<'a, S, V> {
     type Item = &'a str;
     fn next(&mut self) -> Option<Self::Item> {
         if self.start < self.end {
@@ -587,7 +786,7 @@ impl<'a, S: AsRef<str>> Iterator for JsonPointerIter<'a, S> {
         (size, Some(size))
     }
 }
-impl<'a, S: AsRef<str>> DoubleEndedIterator for JsonPointerIter<'a, S> {
+impl<'a, S: AsRef<str>, V: SegList> DoubleEndedIterator for JsonPointerIter<'a, S, V> {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.start < self.end {
             self.end -= 1;
@@ -598,11 +797,11 @@ impl<'a, S: AsRef<str>> DoubleEndedIterator for JsonPointerIter<'a, S> {
     }
 }
 
-pub struct JsonPointerIntoIter<S: AsRef<str>> {
+pub struct JsonPointerIntoIter<S: AsRef<str>, V: IntoIterator<Item = PtrSegment> + SegList> {
     src: S,
-    iter: std::collections::vec_deque::IntoIter<PtrSegment>,
+    iter: V::IntoIter,
 }
-impl<S: AsRef<str>> JsonPointerIntoIter<S> {
+impl<S: AsRef<str>, V: IntoIterator<Item = PtrSegment> + SegList> JsonPointerIntoIter<S, V> {
     fn next<'a>(&'a mut self) -> Option<Cow<'a, str>> {
         if let Some(seg) = self.iter.next() {
             Some(match seg {
@@ -613,6 +812,11 @@ impl<S: AsRef<str>> JsonPointerIntoIter<S> {
             None
         }
     }
+}
+impl<S: AsRef<str>, V: IntoIterator<Item = PtrSegment> + SegList> JsonPointerIntoIter<S, V>
+where
+    V::IntoIter: DoubleEndedIterator,
+{
     fn next_back<'a>(&'a mut self) -> Option<Cow<'a, str>> {
         if let Some(seg) = self.iter.next_back() {
             Some(match seg {
@@ -624,7 +828,9 @@ impl<S: AsRef<str>> JsonPointerIntoIter<S> {
         }
     }
 }
-impl<S: AsRef<str>> Iterator for JsonPointerIntoIter<S> {
+impl<S: AsRef<str>, V: IntoIterator<Item = PtrSegment> + SegList> Iterator
+    for JsonPointerIntoIter<S, V>
+{
     type Item = String;
     fn next(&mut self) -> Option<Self::Item> {
         self.next().map(|s| s.to_string())
@@ -633,7 +839,11 @@ impl<S: AsRef<str>> Iterator for JsonPointerIntoIter<S> {
         self.iter.size_hint()
     }
 }
-impl<S: AsRef<str>> DoubleEndedIterator for JsonPointerIntoIter<S> {
+impl<S: AsRef<str>, V: IntoIterator<Item = PtrSegment> + SegList> DoubleEndedIterator
+    for JsonPointerIntoIter<S, V>
+where
+    V::IntoIter: DoubleEndedIterator,
+{
     fn next_back(&mut self) -> Option<Self::Item> {
         self.next_back().map(|s| s.to_string())
     }
