@@ -555,6 +555,7 @@ impl JsonPointer<String> {
             range.start += prefix_len;
             range.end += prefix_len;
         }
+        self.src = src;
         self.segments.push_front(if escaped > 0 {
             PtrSegment::Escaped(1..prefix_len, segment.to_owned())
         } else {
