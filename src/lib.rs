@@ -411,9 +411,7 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
     }
     pub fn to_owned(self) -> JsonPointer {
         JsonPointer {
-            src: self.src.as_ref()[self.segments.first().map(|s| s.range().start).unwrap_or(0)
-                ..self.segments.last().map(|s| s.range().end).unwrap_or(0)]
-                .to_owned(),
+            src: self.src.as_ref().to_owned(),
             segments: self.segments.to_vec_deque(),
         }
     }
@@ -460,7 +458,7 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
         if self.len() == other.len() {
             return Some(Default::default());
         }
-        let src_start = self.segments.get(other.segments.len())?.range().start;
+        let src_start = self.segments.get(other.segments.len())?.range().start - 1;
         Some(JsonPointer {
             src: &self.src.as_ref()[src_start..],
             segments: self.segments.slice(other.segments.len()..)?,
@@ -470,10 +468,16 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
         &self,
         range: R,
     ) -> Option<JsonPointer<&str, (&[PtrSegment], &[PtrSegment])>> {
-        let s = self.src.as_ref();
+        let mut s = self.src.as_ref();
+        let seg = self.segments.slice(range)?;
+        let mut iter = seg.0.iter().chain(seg.1.iter());
+        if let Some(first) = iter.next() {
+            let last = iter.next_back().unwrap_or(first);
+            s = &s[first.range().start - 1..last.range().end];
+        }
         Some(JsonPointer {
             src: s,
-            segments: self.segments.slice(range)?,
+            segments: seg,
         })
     }
     pub fn iter<'a>(&'a self) -> JsonPointerIter<'a, S, V> {
