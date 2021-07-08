@@ -148,6 +148,7 @@ impl SegList for (&[PtrSegment], &[PtrSegment]) {
 #[derive(Clone, Debug, Default)]
 pub struct JsonPointer<S: AsRef<str> = String, V: SegList = VecDeque<PtrSegment>> {
     src: S,
+    offset: usize,
     segments: V,
 }
 impl<S: AsRef<str>> JsonPointer<S> {
@@ -156,6 +157,7 @@ impl<S: AsRef<str>> JsonPointer<S> {
         if src == "" {
             return Ok(JsonPointer {
                 src: s,
+                offset: 0,
                 segments: VecDeque::new(),
             });
         }
@@ -217,13 +219,19 @@ impl<S: AsRef<str>> JsonPointer<S> {
             }
         }
         segments.push_back(segment);
-        Ok(JsonPointer { src: s, segments })
+        Ok(JsonPointer {
+            src: s,
+            offset: 0,
+            segments,
+        })
     }
 }
 impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
     pub fn get_segment<'a>(&'a self, idx: usize) -> Option<&'a str> {
         match self.segments.get(idx) {
-            Some(PtrSegment::Unescaped(range)) => Some(&self.src.as_ref()[range.clone()]),
+            Some(PtrSegment::Unescaped(range)) => {
+                Some(&self.src.as_ref()[(range.start - self.offset)..(range.end - self.offset)])
+            }
             Some(PtrSegment::Escaped(_, s)) => Some(&s),
             None => None,
         }
@@ -412,13 +420,14 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
     pub fn to_owned(self) -> JsonPointer {
         JsonPointer {
             src: self.src.as_ref().to_owned(),
+            offset: self.offset,
             segments: self.segments.to_vec_deque(),
         }
     }
     pub fn common_prefix<'a, S0: AsRef<str>, V0: SegList>(
         &'a self,
         other: &JsonPointer<S0, V0>,
-    ) -> JsonPointer<&'a str> {
+    ) -> JsonPointer<&'a str, (&'a [PtrSegment], &'a [PtrSegment])> {
         let src = self.src.as_ref();
         let mut common = None;
         for (idx, seg) in self.iter().enumerate() {
@@ -431,12 +440,19 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
             self.segments
                 .get(common)
                 .map(PtrSegment::range)
-                .map(|r| r.end)
+                .map(|r| r.end - self.offset)
                 .unwrap_or(0)
         } else {
             0
         };
-        JsonPointer::parse(&src[..common_idx]).unwrap()
+        JsonPointer {
+            src: &self.src.as_ref()[0..common_idx],
+            offset: self.offset,
+            segments: self
+                .segments
+                .slice(0..(common.map(|a| a + 1).unwrap_or(0)))
+                .unwrap(),
+        }
     }
     pub fn starts_with<S0: AsRef<str>, V0: SegList>(&self, other: &JsonPointer<S0, V0>) -> bool {
         for (idx, seg) in other.iter().enumerate() {
@@ -461,6 +477,7 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
         let src_start = self.segments.get(other.segments.len())?.range().start - 1;
         Some(JsonPointer {
             src: &self.src.as_ref()[src_start..],
+            offset: src_start,
             segments: self.segments.slice(other.segments.len()..)?,
         })
     }
@@ -471,12 +488,15 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
         let mut s = self.src.as_ref();
         let seg = self.segments.slice(range)?;
         let mut iter = seg.0.iter().chain(seg.1.iter());
+        let mut offset = self.offset;
         if let Some(first) = iter.next() {
             let last = iter.next_back().unwrap_or(first);
-            s = &s[first.range().start - 1..last.range().end];
+            offset = first.range().start - 1;
+            s = &s[first.range().start - 1 - self.offset..last.range().end - self.offset];
         }
         Some(JsonPointer {
             src: s,
+            offset,
             segments: seg,
         })
     }
@@ -657,17 +677,22 @@ where
     type Output = JsonPointer<S0::Output, V0>;
     fn add(mut self, rhs: &'a JsonPointer<S1, V1>) -> Self::Output {
         let src_len = self.src.as_ref().len();
+        let offset = self.offset;
         self.segments
             .extend((&rhs.segments).into_iter().map(|seg| match seg {
-                PtrSegment::Unescaped(range) => {
-                    PtrSegment::Unescaped(range.start + src_len..range.end + src_len)
-                }
-                PtrSegment::Escaped(range, s) => {
-                    PtrSegment::Escaped(range.start + src_len..range.end + src_len, s.clone())
-                }
+                PtrSegment::Unescaped(range) => PtrSegment::Unescaped(
+                    range.start - rhs.offset + src_len + offset
+                        ..range.end - rhs.offset + src_len + offset,
+                ),
+                PtrSegment::Escaped(range, s) => PtrSegment::Escaped(
+                    range.start - rhs.offset + src_len + offset
+                        ..range.end - rhs.offset + src_len + offset,
+                    s.clone(),
+                ),
             }));
         JsonPointer {
             src: self.src + rhs.src.as_ref(),
+            offset,
             segments: self.segments,
         }
     }
@@ -686,15 +711,19 @@ where
         let src_len = self.src.as_ref().len();
         let mut segments = self.segments.clone();
         segments.extend((&rhs.segments).into_iter().map(|seg| match seg {
-            PtrSegment::Unescaped(range) => {
-                PtrSegment::Unescaped(range.start + src_len..range.end + src_len)
-            }
-            PtrSegment::Escaped(range, s) => {
-                PtrSegment::Escaped(range.start + src_len..range.end + src_len, s.clone())
-            }
+            PtrSegment::Unescaped(range) => PtrSegment::Unescaped(
+                range.start - rhs.offset + src_len + self.offset
+                    ..range.end - rhs.offset + src_len + self.offset,
+            ),
+            PtrSegment::Escaped(range, s) => PtrSegment::Escaped(
+                range.start - rhs.offset + src_len + self.offset
+                    ..range.end - rhs.offset + src_len + self.offset,
+                s.clone(),
+            ),
         }));
         JsonPointer {
             src: self.src.clone() + rhs.src.as_ref(),
+            offset: self.offset,
             segments,
         }
     }
@@ -709,14 +738,18 @@ where
 {
     fn add_assign(&mut self, rhs: &'a JsonPointer<S1, V1>) {
         let src_len = self.src.as_ref().len();
+        let offset = self.offset;
         self.segments
             .extend((&rhs.segments).into_iter().map(|seg| match seg {
-                PtrSegment::Unescaped(range) => {
-                    PtrSegment::Unescaped(range.start + src_len..range.end + src_len)
-                }
-                PtrSegment::Escaped(range, s) => {
-                    PtrSegment::Escaped(range.start + src_len..range.end + src_len, s.clone())
-                }
+                PtrSegment::Unescaped(range) => PtrSegment::Unescaped(
+                    range.start - rhs.offset + src_len + offset
+                        ..range.end - rhs.offset + src_len + offset,
+                ),
+                PtrSegment::Escaped(range, s) => PtrSegment::Escaped(
+                    range.start - rhs.offset + src_len + offset
+                        ..range.end - rhs.offset + src_len + offset,
+                    s.clone(),
+                ),
             }));
         self.src += rhs.src.as_ref();
     }
