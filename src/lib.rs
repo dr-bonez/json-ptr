@@ -236,6 +236,18 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
             None => None,
         }
     }
+    pub fn uncons<'a>(
+        &'a self,
+    ) -> Option<(
+        &'a str,
+        JsonPointer<&'a str, (&'a [PtrSegment], &'a [PtrSegment])>,
+    )> {
+        if let (Some(s), Some(rest)) = (self.get_segment(0), self.slice(1..)) {
+            Some((s, rest))
+        } else {
+            None
+        }
+    }
     pub fn len(&self) -> usize {
         self.segments.len()
     }
