@@ -67,7 +67,7 @@ impl SegList for VecDeque<PtrSegment> {
             Bound::Excluded(n) => *n,
         };
         let (left, right) = self.as_slices();
-        if start_idx < left.len() {
+        if start_idx <= left.len() {
             if end_idx <= left.len() {
                 Some((&left[start_idx..end_idx], &[]))
             } else if end_idx - left.len() <= right.len() {
@@ -75,7 +75,7 @@ impl SegList for VecDeque<PtrSegment> {
             } else {
                 None
             }
-        } else if start_idx - left.len() < right.len() && end_idx - left.len() <= right.len() {
+        } else if start_idx - left.len() <= right.len() && end_idx - left.len() <= right.len() {
             Some((&[], &right[start_idx - left.len()..end_idx - left.len()]))
         } else {
             None
@@ -897,4 +897,18 @@ where
     fn next_back(&mut self) -> Option<Self::Item> {
         self.next_back().map(|s| s.to_string())
     }
+}
+
+#[test]
+fn uncons_base() {
+    let base: JsonPointer = "".parse().unwrap();
+    assert_eq!(base.uncons(), None)
+}
+
+#[test]
+fn uncons_inductive() {
+    let inductive: JsonPointer = "/test/check".parse().unwrap();
+    let (first, rest) = inductive.uncons().unwrap();
+    assert_eq!(first, "test");
+    assert_eq!(rest, "/check".parse::<JsonPointer>().unwrap());
 }
