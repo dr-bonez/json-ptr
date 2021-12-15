@@ -440,7 +440,6 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
         &'a self,
         other: &JsonPointer<S0, V0>,
     ) -> JsonPointer<&'a str, (&'a [PtrSegment], &'a [PtrSegment])> {
-        let src = self.src.as_ref();
         let mut common = None;
         for (idx, seg) in self.iter().enumerate() {
             if Some(seg) != other.get_segment(idx) {
@@ -457,8 +456,9 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
         } else {
             0
         };
+        let src = self.src.as_ref();
         JsonPointer {
-            src: &self.src.as_ref()[0..common_idx],
+            src: &src[0..common_idx],
             offset: self.offset,
             segments: self
                 .segments
