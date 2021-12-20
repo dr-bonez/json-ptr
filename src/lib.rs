@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::ops::{Add, AddAssign, Bound, Range, RangeBounds};
@@ -150,6 +151,41 @@ pub struct JsonPointer<S: AsRef<str> = String, V: SegList = VecDeque<PtrSegment>
     src: S,
     offset: usize,
     segments: V,
+}
+impl<S: AsRef<str>, V: SegList> Eq for JsonPointer<S, V> {}
+impl<S: AsRef<str>, V: SegList> PartialOrd for JsonPointer<S, V> {
+    fn partial_cmp(&self, other: &JsonPointer<S, V>) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl<S: AsRef<str>, V: SegList> Ord for JsonPointer<S, V> {
+    fn cmp(&self, other: &JsonPointer<S, V>) -> Ordering {
+        let mut a = self.iter();
+        let mut b = other.iter();
+        loop {
+            let a_head = a.next();
+            let b_head = b.next();
+            match (a_head, b_head) {
+                (None, None) => {
+                    return Ordering::Equal;
+                }
+                (None, Some(_)) => {
+                    return Ordering::Less;
+                }
+                (Some(_), None) => {
+                    return Ordering::Greater;
+                }
+                (Some(p), Some(q)) => match p.cmp(q) {
+                    Ordering::Equal => {
+                        continue;
+                    }
+                    ne => {
+                        return ne;
+                    }
+                },
+            }
+        }
+    }
 }
 impl<S: AsRef<str>> JsonPointer<S> {
     pub fn parse(s: S) -> Result<Self, ParseError> {
