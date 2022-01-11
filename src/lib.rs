@@ -124,7 +124,7 @@ impl SegList for (&[PtrSegment], &[PtrSegment]) {
             Bound::Excluded(n) => *n,
         };
         let (left, right) = *self;
-        if start_idx < left.len() {
+        if start_idx <= left.len() {
             if end_idx <= left.len() {
                 Some((&left[start_idx..end_idx], &[]))
             } else if end_idx - left.len() <= right.len() {
@@ -541,6 +541,9 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
             let last = iter.next_back().unwrap_or(first);
             offset = first.range().start - 1;
             s = &s[first.range().start - 1 - self.offset..last.range().end - self.offset];
+        } else {
+            offset = 0;
+            s = "";
         }
         Some(JsonPointer {
             src: s,
