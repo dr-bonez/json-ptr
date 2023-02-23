@@ -4,8 +4,10 @@ use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::ops::{Add, AddAssign, Bound, Range, RangeBounds};
 use std::str::FromStr;
+use std::sync::Arc;
 
-use serde_json::Value;
+use imbl::Vector;
+use imbl_value::{InOMap, Value};
 use thiserror::Error;
 
 #[derive(Clone, Debug, Error)]
@@ -331,13 +333,13 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
                         if let Some(next) = self.get_segment(idx + 1) {
                             if recursive {
                                 if next == "0" {
-                                    l.push(Value::Array(Vec::with_capacity(1)));
+                                    l.push_back(Value::Array(Vector::new()));
                                 } else {
-                                    l.push(Value::Object(serde_json::Map::new()))
+                                    l.push_back(Value::Object(InOMap::new()))
                                 }
                             }
                         } else {
-                            l.push(value);
+                            l.push_back(value);
                             return Ok(None);
                         }
                     }
@@ -351,16 +353,16 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
                         if let Some(next) = self.get_segment(idx + 1) {
                             if recursive {
                                 if next == "0" {
-                                    o.insert(seg.to_string(), Value::Array(Vec::with_capacity(1)));
+                                    o.insert(Arc::new(seg.to_owned()), Value::Array(Vector::new()));
                                 } else {
                                     o.insert(
-                                        seg.to_string(),
-                                        Value::Object(serde_json::Map::new()),
+                                        Arc::new(seg.to_owned()),
+                                        Value::Object(InOMap::new()),
                                     );
                                 }
                             }
                         } else {
-                            o.insert(seg.to_string(), value);
+                            o.insert(Arc::new(seg.to_owned()), value);
                             return Ok(None);
                         }
                     }
@@ -384,9 +386,9 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
                     if let Some(next) = self.get_segment(idx + 1) {
                         if num == l.len() && recursive {
                             if next == "0" {
-                                l.insert(num, Value::Array(Vec::with_capacity(1)));
+                                l.insert(num, Value::Array(Vector::new()));
                             } else {
-                                l.insert(num, Value::Object(serde_json::Map::new()))
+                                l.insert(num, Value::Object(InOMap::new()))
                             }
                         }
                     } else if num <= l.len() {
@@ -403,16 +405,16 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
                         if let Some(next) = self.get_segment(idx + 1) {
                             if recursive {
                                 if next == "0" {
-                                    o.insert(seg.to_string(), Value::Array(Vec::with_capacity(1)));
+                                    o.insert(Arc::new(seg.to_owned()), Value::Array(Vector::new()));
                                 } else {
                                     o.insert(
-                                        seg.to_string(),
-                                        Value::Object(serde_json::Map::new()),
+                                        Arc::new(seg.to_owned()),
+                                        Value::Object(InOMap::new()),
                                     );
                                 }
                             }
                         } else {
-                            o.insert(seg.to_string(), value);
+                            o.insert(Arc::new(seg.to_owned()), value);
                             return Ok(None);
                         }
                     }
@@ -536,7 +538,7 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
         let mut s = self.src.as_ref();
         let seg = self.segments.slice(range)?;
         let mut iter = seg.0.iter().chain(seg.1.iter());
-        let mut offset = self.offset;
+        let offset;
         if let Some(first) = iter.next() {
             let last = iter.next_back().unwrap_or(first);
             offset = first.range().start - 1;

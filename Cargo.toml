@@ -12,6 +12,7 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serde = "1.0.118"
-serde_json = "1.0.60"
-thiserror = "1.0.22"
+imbl = "2"
+imbl-value = { git = "https://github.com/Start9Labs/imbl-value.git" }
+serde = "1"
+thiserror = "1"
