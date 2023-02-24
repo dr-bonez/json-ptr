@@ -4,10 +4,9 @@ use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::ops::{Add, AddAssign, Bound, Range, RangeBounds};
 use std::str::FromStr;
-use std::sync::Arc;
 
 use imbl::Vector;
-use imbl_value::{InOMap, Value};
+use imbl_value::{InOMap, InternedString, Value};
 use thiserror::Error;
 
 #[derive(Clone, Debug, Error)]
@@ -353,16 +352,19 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
                         if let Some(next) = self.get_segment(idx + 1) {
                             if recursive {
                                 if next == "0" {
-                                    o.insert(Arc::new(seg.to_owned()), Value::Array(Vector::new()));
+                                    o.insert(
+                                        InternedString::intern(seg),
+                                        Value::Array(Vector::new()),
+                                    );
                                 } else {
                                     o.insert(
-                                        Arc::new(seg.to_owned()),
+                                        InternedString::intern(seg),
                                         Value::Object(InOMap::new()),
                                     );
                                 }
                             }
                         } else {
-                            o.insert(Arc::new(seg.to_owned()), value);
+                            o.insert(InternedString::intern(seg), value);
                             return Ok(None);
                         }
                     }
@@ -405,16 +407,19 @@ impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
                         if let Some(next) = self.get_segment(idx + 1) {
                             if recursive {
                                 if next == "0" {
-                                    o.insert(Arc::new(seg.to_owned()), Value::Array(Vector::new()));
+                                    o.insert(
+                                        InternedString::intern(seg),
+                                        Value::Array(Vector::new()),
+                                    );
                                 } else {
                                     o.insert(
-                                        Arc::new(seg.to_owned()),
+                                        InternedString::intern(seg),
                                         Value::Object(InOMap::new()),
                                     );
                                 }
                             }
                         } else {
-                            o.insert(Arc::new(seg.to_owned()), value);
+                            o.insert(InternedString::intern(seg), value);
                             return Ok(None);
                         }
                     }
