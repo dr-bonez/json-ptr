@@ -9,6 +9,12 @@ use imbl::Vector;
 use imbl_value::{InOMap, InternedString, Value};
 use thiserror::Error;
 
+pub const ROOT: JsonPointer<&str, (&[PtrSegment], &[PtrSegment])> = JsonPointer {
+    src: "",
+    offset: 0,
+    segments: (&[], &[]),
+};
+
 #[derive(Clone, Debug, Error)]
 pub enum ParseError {
     #[error("Invalid Escape: ~{0}")]
