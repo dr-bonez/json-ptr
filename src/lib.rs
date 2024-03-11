@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::borrow::{Borrow, Cow};
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
@@ -41,29 +41,46 @@ fn parse_idx(idx: &str) -> Result<usize, IndexError> {
     Ok(idx.parse()?)
 }
 
-pub trait SegList {
-    fn get(&self, idx: usize) -> Option<&PtrSegment>;
-    fn first(&self) -> Option<&PtrSegment>;
-    fn last(&self) -> Option<&PtrSegment>;
-    fn len(&self) -> usize;
-    fn slice<R: RangeBounds<usize>>(&self, range: R) -> Option<(&[PtrSegment], &[PtrSegment])>;
-    fn to_vec_deque(self) -> VecDeque<PtrSegment>;
-}
+pub type BorrowedSegList<'a> = (&'a [PtrSegment], &'a [PtrSegment]);
 
-impl SegList for VecDeque<PtrSegment> {
-    fn get(&self, idx: usize) -> Option<&PtrSegment> {
-        self.get(idx)
+pub trait SegList: Sized {
+    fn as_slices(&self) -> BorrowedSegList;
+    fn get(&self, mut idx: usize) -> Option<&PtrSegment> {
+        let slices = self.as_slices();
+        for slice in [slices.0, slices.1] {
+            if let Some(seg) = slice.get(idx) {
+                return Some(seg);
+            } else {
+                idx -= slice.len();
+            }
+        }
+        None
     }
     fn first(&self) -> Option<&PtrSegment> {
-        self.front()
+        let slices = self.as_slices();
+        for slice in [slices.0, slices.1] {
+            if let Some(seg) = slice.first() {
+                return Some(seg);
+            }
+        }
+        None
     }
     fn last(&self) -> Option<&PtrSegment> {
-        self.back()
+        let slices = self.as_slices();
+        for slice in [slices.0, slices.1].into_iter().rev() {
+            if let Some(seg) = slice.last() {
+                return Some(seg);
+            }
+        }
+        None
     }
     fn len(&self) -> usize {
-        self.len()
+        let slices = self.as_slices();
+        [slices.0, slices.1]
+            .into_iter()
+            .fold(0, |acc, x| acc + x.len())
     }
-    fn slice<'a, R: RangeBounds<usize>>(&self, range: R) -> Option<(&[PtrSegment], &[PtrSegment])> {
+    fn slice<R: RangeBounds<usize>>(&self, range: R) -> Option<BorrowedSegList> {
         let start_idx = match range.start_bound() {
             Bound::Unbounded => 0,
             Bound::Included(n) => *n,
@@ -83,62 +100,6 @@ impl SegList for VecDeque<PtrSegment> {
             } else {
                 None
             }
-        } else if start_idx - left.len() <= right.len() && end_idx - left.len() <= right.len() {
-            Some((&[], &right[start_idx - left.len()..end_idx - left.len()]))
-        } else {
-            None
-        }
-    }
-    fn to_vec_deque(self) -> VecDeque<PtrSegment> {
-        self
-    }
-}
-
-impl SegList for (&[PtrSegment], &[PtrSegment]) {
-    fn get(&self, idx: usize) -> Option<&PtrSegment> {
-        if idx < self.0.len() {
-            self.0.get(idx)
-        } else {
-            self.1.get(idx - self.0.len())
-        }
-    }
-    fn first(&self) -> Option<&PtrSegment> {
-        if self.0.is_empty() {
-            self.1.first()
-        } else {
-            self.0.first()
-        }
-    }
-    fn last(&self) -> Option<&PtrSegment> {
-        if self.1.is_empty() {
-            self.0.last()
-        } else {
-            self.1.last()
-        }
-    }
-    fn len(&self) -> usize {
-        self.0.len() + self.1.len()
-    }
-    fn slice<R: RangeBounds<usize>>(&self, range: R) -> Option<(&[PtrSegment], &[PtrSegment])> {
-        let start_idx = match range.start_bound() {
-            Bound::Unbounded => 0,
-            Bound::Included(n) => *n,
-            Bound::Excluded(n) => n + 1,
-        };
-        let end_idx = match range.end_bound() {
-            Bound::Unbounded => self.len(),
-            Bound::Included(n) => n + 1,
-            Bound::Excluded(n) => *n,
-        };
-        let (left, right) = *self;
-        if start_idx <= left.len() {
-            if end_idx <= left.len() {
-                Some((&left[start_idx..end_idx], &[]))
-            } else if end_idx - left.len() <= right.len() {
-                Some((&left[start_idx..], &right[..end_idx - left.len()]))
-            } else {
-                None
-            }
         } else if start_idx - left.len() < right.len() && end_idx - left.len() <= right.len() {
             Some((&[], &right[start_idx - left.len()..end_idx - left.len()]))
         } else {
@@ -146,10 +107,25 @@ impl SegList for (&[PtrSegment], &[PtrSegment]) {
         }
     }
     fn to_vec_deque(self) -> VecDeque<PtrSegment> {
-        let mut res = VecDeque::with_capacity(self.0.len() + self.1.len());
-        res.extend(self.0.into_iter().cloned());
-        res.extend(self.1.into_iter().cloned());
+        let slices = self.as_slices();
+        let mut res = VecDeque::with_capacity(self.len());
+        res.extend([slices.0, slices.1].into_iter().flatten().cloned());
         res
+    }
+}
+
+impl SegList for VecDeque<PtrSegment> {
+    fn as_slices(&self) -> BorrowedSegList {
+        self.as_slices()
+    }
+    fn to_vec_deque(self) -> VecDeque<PtrSegment> {
+        self
+    }
+}
+
+impl SegList for (&[PtrSegment], &[PtrSegment]) {
+    fn as_slices(&self) -> BorrowedSegList {
+        (self.0, self.1)
     }
 }
 
@@ -270,6 +246,13 @@ impl<S: AsRef<str>> JsonPointer<S> {
     }
 }
 impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
+    pub fn borrowed(&self) -> JsonPointer<&str, BorrowedSegList> {
+        JsonPointer {
+            src: self.src.as_ref(),
+            offset: self.offset,
+            segments: self.segments.as_slices(),
+        }
+    }
     pub fn get_segment<'a>(&'a self, idx: usize) -> Option<&'a str> {
         match self.segments.get(idx) {
             Some(PtrSegment::Unescaped(range)) => {
