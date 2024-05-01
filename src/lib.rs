@@ -9,7 +9,9 @@ use imbl::Vector;
 use imbl_value::{InOMap, InternedString, Value};
 use thiserror::Error;
 
-pub const ROOT: JsonPointer<&str, (&[PtrSegment], &[PtrSegment])> = JsonPointer {
+pub type JsonPointerRef<'a> = JsonPointer<&'a str, BorrowedSegList<'a>>;
+
+pub const ROOT: JsonPointerRef = JsonPointer {
     src: "",
     offset: 0,
     segments: (&[], &[]),
@@ -123,17 +125,22 @@ impl SegList for VecDeque<PtrSegment> {
     }
 }
 
-impl SegList for (&[PtrSegment], &[PtrSegment]) {
+impl<'a> SegList for BorrowedSegList<'a> {
     fn as_slices(&self) -> BorrowedSegList {
         (self.0, self.1)
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct JsonPointer<S: AsRef<str> = String, V: SegList = VecDeque<PtrSegment>> {
     src: S,
     offset: usize,
     segments: V,
+}
+impl<'a, S: AsRef<str>, V: SegList> From<&'a JsonPointer<S, V>> for JsonPointerRef<'a> {
+    fn from(value: &'a JsonPointer<S, V>) -> Self {
+        value.borrowed()
+    }
 }
 impl<S: AsRef<str>, V: SegList> Eq for JsonPointer<S, V> {}
 impl<S: AsRef<str>, V: SegList> PartialOrd for JsonPointer<S, V> {
@@ -246,7 +253,7 @@ impl<S: AsRef<str>> JsonPointer<S> {
     }
 }
 impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
-    pub fn borrowed(&self) -> JsonPointer<&str, BorrowedSegList> {
+    pub fn borrowed(&self) -> JsonPointerRef {
         JsonPointer {
             src: self.src.as_ref(),
             offset: self.offset,
