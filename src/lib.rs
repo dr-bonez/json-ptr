@@ -688,7 +688,7 @@ impl FromStr for JsonPointer<String> {
         JsonPointer::parse(s.to_owned())
     }
 }
-impl<S: AsRef<str>> AsRef<str> for JsonPointer<S> {
+impl<S: AsRef<str>, V: SegList> AsRef<str> for JsonPointer<S, V> {
     fn as_ref(&self) -> &str {
         self.src.as_ref()
     }
