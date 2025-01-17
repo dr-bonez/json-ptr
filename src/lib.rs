@@ -572,9 +572,6 @@ impl<S: AsRef<str>, V: IntoIterator<Item = PtrSegment> + SegList> JsonPointer<S,
 }
 impl JsonPointer<String> {
     pub fn push_end(&mut self, segment: &str) {
-        if segment.is_empty() {
-            return;
-        }
         let mut escaped = false;
         self.src.push('/');
         let start = self.src.len();
@@ -607,9 +604,6 @@ impl JsonPointer<String> {
         self.segments.push_back(PtrSegment::Unescaped(start..end));
     }
     pub fn push_start(&mut self, segment: &str) {
-        if segment.is_empty() {
-            return;
-        }
         let escaped = segment.chars().filter(|c| *c == '~' || *c == '/').count();
         let prefix_len = segment.len() + escaped + 1;
         let mut src = String::with_capacity(self.src.len() + prefix_len);
