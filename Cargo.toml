@@ -13,6 +13,6 @@ readme = "README.md"
 
 [dependencies]
 imbl = "2"
-imbl-value = { git = "https://github.com/Start9Labs/imbl-value.git" }
+imbl-value = "0.1.2"
 serde = "1"
 thiserror = "1"
