@@ -12,7 +12,7 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-imbl = "2"
-imbl-value = "0.1.2"
+imbl = "4"
+imbl-value = "0.2.0"
 serde = "1"
-thiserror = "1"
+thiserror = "2"
