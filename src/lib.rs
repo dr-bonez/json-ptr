@@ -661,8 +661,16 @@ impl JsonPointer<String> {
         self.push_end(segment);
         self
     }
+    pub fn join_end_idx(mut self, segment: usize) -> Self {
+        self.push_end_idx(segment);
+        self
+    }
     pub fn join_start(mut self, segment: &str) -> Self {
         self.push_start(segment);
+        self
+    }
+    pub fn join_start_idx(mut self, segment: usize) -> Self {
+        self.push_start_idx(segment);
         self
     }
     pub fn append<S: AsRef<str>, V: SegList>(&mut self, suffix: &JsonPointer<S, V>) {
