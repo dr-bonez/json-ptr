@@ -13,6 +13,6 @@ readme = "README.md"
 
 [dependencies]
 imbl = "4"
-imbl-value = "0.3.0"
+imbl-value = "0.3.2"
 serde = "1"
 thiserror = "2"
