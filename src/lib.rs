@@ -1,4 +1,4 @@
-use std::borrow::{Borrow, Cow};
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
@@ -46,7 +46,7 @@ fn parse_idx(idx: &str) -> Result<usize, IndexError> {
 pub type BorrowedSegList<'a> = (&'a [PtrSegment], &'a [PtrSegment]);
 
 pub trait SegList: Sized {
-    fn as_slices(&self) -> BorrowedSegList;
+    fn as_slices(&self) -> BorrowedSegList<'_>;
     fn get(&self, mut idx: usize) -> Option<&PtrSegment> {
         let slices = self.as_slices();
         for slice in [slices.0, slices.1] {
@@ -82,7 +82,7 @@ pub trait SegList: Sized {
             .into_iter()
             .fold(0, |acc, x| acc + x.len())
     }
-    fn slice<R: RangeBounds<usize>>(&self, range: R) -> Option<BorrowedSegList> {
+    fn slice<R: RangeBounds<usize>>(&self, range: R) -> Option<BorrowedSegList<'_>> {
         let start_idx = match range.start_bound() {
             Bound::Unbounded => 0,
             Bound::Included(n) => *n,
@@ -117,7 +117,7 @@ pub trait SegList: Sized {
 }
 
 impl SegList for VecDeque<PtrSegment> {
-    fn as_slices(&self) -> BorrowedSegList {
+    fn as_slices(&self) -> BorrowedSegList<'_> {
         self.as_slices()
     }
     fn to_vec_deque(self) -> VecDeque<PtrSegment> {
@@ -126,7 +126,7 @@ impl SegList for VecDeque<PtrSegment> {
 }
 
 impl<'a> SegList for BorrowedSegList<'a> {
-    fn as_slices(&self) -> BorrowedSegList {
+    fn as_slices(&self) -> BorrowedSegList<'_> {
         (self.0, self.1)
     }
 }
@@ -253,7 +253,7 @@ impl<S: AsRef<str>> JsonPointer<S> {
     }
 }
 impl<S: AsRef<str>, V: SegList> JsonPointer<S, V> {
-    pub fn borrowed(&self) -> JsonPointerRef {
+    pub fn borrowed(&self) -> JsonPointerRef<'_> {
         JsonPointer {
             src: self.src.as_ref(),
             offset: self.offset,
